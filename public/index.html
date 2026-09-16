@@ -1,0 +1,1786 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fantasy Chronicle - Crónicas de Liga</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📰</text></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;800&family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root {
+      --bg-primary: #faf9f6;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #f0ede6;
+      --bg-accent: #1a1a1a;
+      --text-primary: #1a1a1a;
+      --text-secondary: #4a4a4a;
+      --text-muted: #7a7a7a;
+      --accent-orange: #c4704f;
+      --accent-gold: #b8860b;
+      --accent-green: #2d6a4f;
+      --accent-red: #9b2c2c;
+      --accent-blue: #2563eb;
+      --border: #e0ddd5;
+      --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: 'Source Sans 3', sans-serif; 
+      background: var(--bg-primary); 
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    h1, h2, h3, h4 { font-family: 'Playfair Display', serif; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+    @keyframes typewriter { from { width: 0; } to { width: 100%; } }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.7; transform: scale(1.1); } }
+    .fade-in { animation: fadeIn 0.5s ease-out forwards; opacity: 0; }
+    .slide-in { animation: slideIn 0.4s ease-out forwards; opacity: 0; }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    input, select, button, textarea { font-family: inherit; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-orange) !important; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    
+    @media (max-width: 768px) {
+      .hide-mobile { display: none !important; }
+      .mobile-stack { flex-direction: column !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
+
+    // ================================================================
+    // WEB SPEECH API - Text to Speech (FIXED VERSION)
+    // ================================================================
+    const useSpeech = () => {
+      const [speaking, setSpeaking] = useState(false);
+      const [paused, setPaused] = useState(false);
+      const [voices, setVoices] = useState([]);
+      const [selectedVoice, setSelectedVoice] = useState(null);
+      const [rate, setRate] = useState(1.0);
+      const [supported, setSupported] = useState(true);
+      const [error, setError] = useState(null);
+      const utteranceRef = React.useRef(null);
+      const chunksRef = React.useRef([]);
+      const currentChunkRef = React.useRef(0);
+
+      useEffect(() => {
+        // Check if speech synthesis is supported
+        if (!window.speechSynthesis) {
+          setSupported(false);
+          setError('Tu navegador no soporta Text-to-Speech');
+          return;
+        }
+
+        const loadVoices = () => {
+          const availableVoices = speechSynthesis.getVoices();
+          console.log('Voces disponibles:', availableVoices.length);
+          
+          if (availableVoices.length === 0) {
+            // Retry after a short delay (voices sometimes load async)
+            setTimeout(loadVoices, 100);
+            return;
+          }
+          
+          // Filtrar voces en español
+          const spanishVoices = availableVoices.filter(v => 
+            v.lang.startsWith('es') || v.lang.startsWith('ES')
+          );
+          
+          // Si no hay voces en español, usar todas
+          const voicesToUse = spanishVoices.length > 0 ? spanishVoices : availableVoices;
+          setVoices(voicesToUse);
+          
+          // Seleccionar voz por defecto (preferir español mexicano, luego Paulina, luego cualquier español)
+          const mexicanVoice = voicesToUse.find(v => v.lang === 'es-MX');
+          const paulinaVoice = voicesToUse.find(v => v.name.includes('Paulina'));
+          const spanishVoice = voicesToUse.find(v => v.lang.startsWith('es'));
+          const googleSpanish = voicesToUse.find(v => v.name.includes('Google') && v.lang.startsWith('es'));
+          
+          setSelectedVoice(googleSpanish || mexicanVoice || paulinaVoice || spanishVoice || voicesToUse[0] || null);
+        };
+
+        // Initial load
+        loadVoices();
+        
+        // Also listen for voiceschanged event
+        speechSynthesis.onvoiceschanged = loadVoices;
+
+        return () => {
+          speechSynthesis.cancel();
+        };
+      }, []);
+
+      // Split text into chunks to avoid cutting off long texts
+      const splitTextIntoChunks = (text, maxLength = 200) => {
+        const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+        const chunks = [];
+        let currentChunk = '';
+
+        for (const sentence of sentences) {
+          if ((currentChunk + sentence).length > maxLength && currentChunk) {
+            chunks.push(currentChunk.trim());
+            currentChunk = sentence;
+          } else {
+            currentChunk += sentence;
+          }
+        }
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk.trim());
+        }
+        return chunks;
+      };
+
+      const speakChunk = (chunkIndex) => {
+        if (chunkIndex >= chunksRef.current.length) {
+          setSpeaking(false);
+          setPaused(false);
+          return;
+        }
+
+        const text = chunksRef.current[chunkIndex];
+        const utterance = new SpeechSynthesisUtterance(text);
+        
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
+        }
+        utterance.rate = rate;
+        utterance.pitch = 1.0;
+        utterance.lang = selectedVoice?.lang || 'es-MX';
+        
+        utterance.onstart = () => {
+          setSpeaking(true);
+          setPaused(false);
+          setError(null);
+        };
+        
+        utterance.onend = () => {
+          currentChunkRef.current = chunkIndex + 1;
+          // Small delay between chunks for natural speech
+          setTimeout(() => speakChunk(chunkIndex + 1), 100);
+        };
+        
+        utterance.onerror = (e) => {
+          console.error('Speech error:', e);
+          if (e.error !== 'canceled') {
+            setError(`Error: ${e.error}`);
+          }
+          setSpeaking(false);
+          setPaused(false);
+        };
+        
+        utteranceRef.current = utterance;
+        speechSynthesis.speak(utterance);
+      };
+
+      const speak = (text) => {
+        if (!text || !supported) return;
+        
+        // Cancel any previous speech
+        speechSynthesis.cancel();
+        
+        // Reset state
+        setError(null);
+        
+        // Split into chunks
+        chunksRef.current = splitTextIntoChunks(text);
+        currentChunkRef.current = 0;
+        
+        console.log('Speaking', chunksRef.current.length, 'chunks');
+        
+        // Start speaking first chunk
+        speakChunk(0);
+      };
+
+      const pause = () => {
+        if (speaking && !paused) {
+          speechSynthesis.pause();
+          setPaused(true);
+        }
+      };
+
+      const resume = () => {
+        if (speaking && paused) {
+          speechSynthesis.resume();
+          setPaused(false);
+        }
+      };
+
+      const stop = () => {
+        speechSynthesis.cancel();
+        chunksRef.current = [];
+        currentChunkRef.current = 0;
+        setSpeaking(false);
+        setPaused(false);
+      };
+
+      const togglePlayPause = (text) => {
+        if (!speaking) {
+          speak(text);
+        } else if (paused) {
+          resume();
+        } else {
+          pause();
+        }
+      };
+
+      return {
+        speak,
+        pause,
+        resume,
+        stop,
+        togglePlayPause,
+        speaking,
+        paused,
+        voices,
+        selectedVoice,
+        setSelectedVoice,
+        rate,
+        setRate,
+        supported,
+        error
+      };
+    };
+
+    // ================================================================
+    // TONE DEFINITIONS
+    // ================================================================
+    const TONES = {
+      jocoso: {
+        name: '😂 Jocoso',
+        description: 'Humor, burlas amistosas, memes',
+        prompt: 'Escribe en tono humorístico y burlón, con referencias a memes, burlas amistosas hacia los perdedores, y celebraciones exageradas para los ganadores. Usa expresiones coloquiales mexicanas. Sé creativo con apodos y situaciones cómicas.'
+      },
+      oficial: {
+        name: '📰 Oficial',
+        description: 'Estilo periodístico formal',
+        prompt: 'Escribe como un periodista deportivo profesional. Tono formal pero entretenido, con datos estadísticos, análisis táctico y lenguaje técnico de fantasy football. Mantén objetividad.'
+      },
+      dramatico: {
+        name: '🎭 Dramático',
+        description: 'Épico, narrativa intensa',
+        prompt: 'Escribe como si fuera una épica batalla medieval o un drama shakesperiano. Exagera las emociones, usa metáforas grandiosas, describe cada punto como si fuera vida o muerte. Hazlo épico y memorable.'
+      },
+      trashtalk: {
+        name: '🔥 Trash Talk',
+        description: 'Picante, provocador',
+        prompt: 'Escribe trash talk picante pero sin pasarse de la raya. Provoca a los perdedores, exalta a los ganadores de forma arrogante, usa referencias a fracasos pasados. El objetivo es generar respuestas y debate.'
+      },
+      narradorFutbol: {
+        name: '⚽ Narrador MX',
+        description: 'Estilo Martinoli/Luis García',
+        prompt: 'Escribe como narrador de fútbol mexicano estilo Martinoli, Christian Martinoli o Luis García. Usa sus frases características, exageraciones, gritos de gol adaptados a touchdowns, y el humor característico de TV Azteca. Incluye "¡Qué satisfacción!", "Se lo buscó, se lo encontró", etc.'
+      },
+      poeta: {
+        name: '✍️ Poeta',
+        description: 'Lírico, metafórico',
+        prompt: 'Escribe en verso o prosa poética. Usa metáforas elaboradas, referencias literarias, y un tono melancólico o triunfante según corresponda. Hazlo sonar como literatura.'
+      }
+    };
+
+    // ================================================================
+    // RATING SYSTEM
+    // ================================================================
+    const calculateManagerRating = (weekResults, previousRating = 1500) => {
+      // Sistema ELO simplificado para fantasy
+      const K = 32;
+      let newRating = previousRating;
+      
+      // Factores de rating
+      const factors = {
+        win: 25,
+        loss: -20,
+        blowoutWin: 15,      // Ganar por 30+
+        blowoutLoss: -10,    // Perder por 30+
+        closeWin: 10,        // Ganar por menos de 5
+        closeLoss: -5,       // Perder por menos de 5
+        highScore: 20,       // Top 3 score de la semana
+        lowScore: -15,       // Bottom 3 score de la semana
+        optimalLineup: 10,   // Si usó lineup óptimo
+        benchedBoom: -8,     // Dejó puntos en banca
+      };
+
+      // Calcular cambio basado en resultado
+      if (weekResults.won) {
+        newRating += factors.win;
+        if (weekResults.margin >= 30) newRating += factors.blowoutWin;
+        if (weekResults.margin < 5) newRating += factors.closeWin;
+      } else {
+        newRating += factors.loss;
+        if (weekResults.margin >= 30) newRating += factors.blowoutLoss;
+        if (weekResults.margin < 5) newRating += factors.closeLoss;
+      }
+
+      // Bonus/penalty por score relativo
+      if (weekResults.isTopScorer) newRating += factors.highScore;
+      if (weekResults.isBottomScorer) newRating += factors.lowScore;
+
+      // Gestión de lineup
+      if (weekResults.pointsLeftOnBench > 20) newRating += factors.benchedBoom;
+
+      return Math.max(1000, Math.round(newRating));
+    };
+
+    const getRatingTier = (rating) => {
+      if (rating >= 1800) return { tier: 'ELITE', emoji: '👑', color: '#b8860b' };
+      if (rating >= 1650) return { tier: 'PRO', emoji: '🏆', color: '#2d6a4f' };
+      if (rating >= 1500) return { tier: 'COMPETENTE', emoji: '💪', color: '#2563eb' };
+      if (rating >= 1350) return { tier: 'AMATEUR', emoji: '📚', color: '#7a7a7a' };
+      return { tier: 'NOVATO', emoji: '🐣', color: '#9b2c2c' };
+    };
+
+    // ================================================================
+    // SLEEPER API HELPERS
+    // ================================================================
+    async function fetchMatchups(leagueId, week) {
+      const res = await fetch(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`);
+      return res.json();
+    }
+
+    async function fetchLeagueUsers(leagueId) {
+      const res = await fetch(`https://api.sleeper.app/v1/league/${leagueId}/users`);
+      return res.json();
+    }
+
+    async function fetchRosters(leagueId) {
+      const res = await fetch(`https://api.sleeper.app/v1/league/${leagueId}/rosters`);
+      return res.json();
+    }
+
+    async function fetchLeague(leagueId) {
+      const res = await fetch(`https://api.sleeper.app/v1/league/${leagueId}`);
+      return res.json();
+    }
+
+    async function fetchPlayersDb() {
+      const res = await fetch('https://api.sleeper.app/v1/players/nfl');
+      return res.json();
+    }
+
+    async function fetchUserLeagues(userId, season = '2026') {
+      const res = await fetch(`https://api.sleeper.app/v1/user/${userId}/leagues/nfl/${season}`);
+      return res.json();
+    }
+
+    async function fetchUser(username) {
+      const res = await fetch(`https://api.sleeper.app/v1/user/${username}`);
+      return res.json();
+    }
+
+    // ================================================================
+    // CHRONICLE GENERATOR (Claude API)
+    // ================================================================
+    async function generateChronicle(matchupData, tone, context) {
+      const toneConfig = TONES[tone];
+      
+      const prompt = `Eres un cronista de fantasy football para una liga entre amigos. ${toneConfig.prompt}
+
+CONTEXTO DE LA LIGA:
+- Liga: ${context.leagueName}
+- Semana: ${context.week}
+- Temporada: 2026
+
+DATOS DEL MATCHUP:
+- ${matchupData.winner.name} (${matchupData.winner.teamName}) GANÓ con ${matchupData.winner.points} puntos
+- ${matchupData.loser.name} (${matchupData.loser.teamName}) PERDIÓ con ${matchupData.loser.points} puntos
+- Diferencia: ${matchupData.margin.toFixed(2)} puntos
+- Tipo de victoria: ${matchupData.margin < 5 ? 'FOTO FINISH - Muy cerrado' : matchupData.margin > 30 ? 'PALIZA HISTÓRICA' : 'Victoria normal'}
+
+JUGADORES DESTACADOS DEL GANADOR:
+${matchupData.winner.topPlayers.map(p => `- ${p.name}: ${p.points} pts`).join('\n')}
+
+JUGADORES DESTACADOS DEL PERDEDOR:
+${matchupData.loser.topPlayers.map(p => `- ${p.name}: ${p.points} pts`).join('\n')}
+
+${matchupData.loser.busts.length > 0 ? `DECEPCIONES (jugadores que fallaron):
+${matchupData.loser.busts.map(p => `- ${p.name}: solo ${p.points} pts`).join('\n')}` : ''}
+
+Escribe una crónica de 2-3 párrafos sobre este matchup. Sé específico con los nombres y datos. ${tone === 'jocoso' || tone === 'trashtalk' ? 'No tengas piedad con el perdedor.' : ''}`;
+
+      try {
+        const response = await fetch("/api/claude", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 800,
+            messages: [{ role: "user", content: prompt }]
+          })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('API Error:', response.status, errorData);
+          if (response.status === 401) return 'Error: API Key inválida en el servidor';
+          if (response.status === 429) return 'Error: Rate limit excedido, espera un momento';
+          return `Error ${response.status}: ${errorData.error || 'Error desconocido'}`;
+        }
+        
+        const data = await response.json();
+        return data.content?.[0]?.text || 'Respuesta vacía de la API';
+      } catch (e) {
+        console.error('Error calling Claude:', e);
+        return `Error de conexión: ${e.message}`;
+      }
+    }
+
+    async function generateWeekSummary(weekData, tone, context) {
+      const toneConfig = TONES[tone];
+      
+      const prompt = `Eres el cronista oficial de la liga de fantasy football "${context.leagueName}". ${toneConfig.prompt}
+
+RESUMEN DE LA SEMANA ${context.week}:
+
+RESULTADOS:
+${weekData.matchups.map(m => `• ${m.winner.name} ${m.winner.points} - ${m.loser.points} ${m.loser.name} (${m.margin < 5 ? '¡CERRADÍSIMO!' : m.margin > 30 ? 'PALIZA' : ''})`).join('\n')}
+
+MVP DE LA SEMANA: ${weekData.mvp.name} con ${weekData.mvp.points} pts (equipo de ${weekData.mvp.manager})
+DECEPCIÓN DE LA SEMANA: ${weekData.bust.name} con solo ${weekData.bust.points} pts (equipo de ${weekData.bust.manager})
+MAYOR PALIZA: ${weekData.biggestBlowout.winner} aplastó a ${weekData.biggestBlowout.loser} por ${weekData.biggestBlowout.margin.toFixed(1)} pts
+FOTO FINISH: ${weekData.closestGame.winner} sobrevivió contra ${weekData.closestGame.loser} por ${weekData.closestGame.margin.toFixed(2)} pts
+
+STANDINGS ACTUALES:
+${weekData.standings.slice(0, 5).map((s, i) => `${i+1}. ${s.name} (${s.wins}-${s.losses})`).join('\n')}
+
+Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la semana. Menciona a los managers por nombre, haz referencias a resultados específicos, y ${tone === 'jocoso' ? 'no pierdas oportunidad de burlarte de los perdedores' : tone === 'dramatico' ? 'hazlo épico y memorable' : 'mantén el tono apropiado'}.`;
+
+      try {
+        const response = await fetch("/api/claude", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 1200,
+            messages: [{ role: "user", content: prompt }]
+          })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('API Error:', response.status, errorData);
+          if (response.status === 401) return 'Error: API Key inválida en el servidor';
+          if (response.status === 429) return 'Error: Rate limit excedido, espera un momento';
+          return `Error ${response.status}: ${errorData.error || 'Error desconocido'}`;
+        }
+        
+        const data = await response.json();
+        return data.content?.[0]?.text || 'Respuesta vacía de la API';
+      } catch (e) {
+        console.error('Error calling Claude:', e);
+        return `Error de conexión: ${e.message}`;
+      }
+    }
+
+    // ================================================================
+    // MAIN APP
+    // ================================================================
+    function App() {
+      const [userId, setUserId] = useState(localStorage.getItem('sleeperId') || '');
+      const [userInput, setUserInput] = useState('');
+      const [leagues, setLeagues] = useState([]);
+      const [selectedLeague, setSelectedLeague] = useState(null);
+      const [leagueInfo, setLeagueInfo] = useState(null);
+      const [week, setWeek] = useState(1);
+      const [matchups, setMatchups] = useState([]);
+      const [users, setUsers] = useState([]);
+      const [rosters, setRosters] = useState([]);
+      const [playersDb, setPlayersDb] = useState({});
+      const [loading, setLoading] = useState(false);
+      const [generating, setGenerating] = useState(false);
+      const [selectedTone, setSelectedTone] = useState('jocoso');
+      const [chronicles, setChronicles] = useState({});
+      const [weekSummary, setWeekSummary] = useState('');
+      const [showSettings, setShowSettings] = useState(!localStorage.getItem('sleeperId'));
+      const [managerRatings, setManagerRatings] = useState(() => {
+        const saved = localStorage.getItem('managerRatings');
+        return saved ? JSON.parse(saved) : {};
+      });
+      const [view, setView] = useState('summary'); // 'summary', 'matchups', 'ratings'
+      
+      // Speech hook
+      const speech = useSpeech();
+
+      // Load players DB
+      useEffect(() => {
+        fetchPlayersDb().then(setPlayersDb).catch(console.error);
+      }, []);
+
+      // Load leagues when user connects
+      useEffect(() => {
+        if (userId) {
+          fetchUserLeagues(userId).then(setLeagues).catch(console.error);
+        }
+      }, [userId]);
+
+      // Load league data when selected
+      useEffect(() => {
+        if (!selectedLeague) return;
+        
+        setLoading(true);
+        Promise.all([
+          fetchLeague(selectedLeague.league_id),
+          fetchLeagueUsers(selectedLeague.league_id),
+          fetchRosters(selectedLeague.league_id),
+          fetchMatchups(selectedLeague.league_id, week)
+        ]).then(([league, usersData, rostersData, matchupsData]) => {
+          setLeagueInfo(league);
+          setUsers(usersData);
+          setRosters(rostersData);
+          setMatchups(matchupsData);
+        }).catch(console.error)
+        .finally(() => setLoading(false));
+      }, [selectedLeague, week]);
+
+      // Connect user
+      const handleConnect = async () => {
+        if (!userInput.trim()) return;
+        setLoading(true);
+        try {
+          const userData = await fetchUser(userInput.trim());
+          if (userData?.user_id) {
+            setUserId(userData.user_id);
+            localStorage.setItem('sleeperId', userData.user_id);
+            setShowSettings(false);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+        setLoading(false);
+      };
+
+      // Process matchups into readable format
+      const processedMatchups = useMemo(() => {
+        if (!matchups.length || !users.length || !rosters.length || Object.keys(playersDb).length === 0) {
+          return [];
+        }
+
+        const rosterToUser = {};
+        rosters.forEach(r => {
+          const user = users.find(u => u.user_id === r.owner_id);
+          if (user) {
+            rosterToUser[r.roster_id] = {
+              name: user.display_name,
+              oderId: user.user_id,
+              teamName: user.metadata?.team_name || user.display_name,
+              oderId: r.roster_id,
+              wins: r.settings?.wins || 0,
+              losses: r.settings?.losses || 0
+            };
+          }
+        });
+
+        // Group by matchup_id
+        const matchupGroups = {};
+        matchups.forEach(m => {
+          if (!matchupGroups[m.matchup_id]) matchupGroups[m.matchup_id] = [];
+          matchupGroups[m.matchup_id].push(m);
+        });
+
+        const processed = [];
+        Object.values(matchupGroups).forEach(group => {
+          if (group.length !== 2) return;
+          
+          const [team1, team2] = group;
+          const pts1 = team1.points || 0;
+          const pts2 = team2.points || 0;
+          
+          const winner = pts1 >= pts2 ? team1 : team2;
+          const loser = pts1 >= pts2 ? team2 : team1;
+          
+          const getTopPlayers = (matchup, count = 3) => {
+            const playerPoints = matchup.players_points || {};
+            return Object.entries(playerPoints)
+              .map(([pid, pts]) => ({
+                id: pid,
+                name: playersDb[pid]?.full_name || pid,
+                points: pts || 0,
+                position: playersDb[pid]?.position || '?'
+              }))
+              .sort((a, b) => b.points - a.points)
+              .slice(0, count);
+          };
+
+          const getBusts = (matchup) => {
+            const starters = matchup.starters || [];
+            const playerPoints = matchup.players_points || {};
+            return starters
+              .map(pid => ({
+                id: pid,
+                name: playersDb[pid]?.full_name || pid,
+                points: playerPoints[pid] || 0,
+                position: playersDb[pid]?.position || '?'
+              }))
+              .filter(p => p.points < 5)
+              .sort((a, b) => a.points - b.points);
+          };
+
+          processed.push({
+            id: group[0].matchup_id,
+            winner: {
+              oderId: winner.roster_id,
+              ...rosterToUser[winner.roster_id],
+              points: winner.points || 0,
+              topPlayers: getTopPlayers(winner),
+              busts: getBusts(winner)
+            },
+            loser: {
+              oderId: loser.roster_id,
+              ...rosterToUser[loser.roster_id],
+              points: loser.points || 0,
+              topPlayers: getTopPlayers(loser),
+              busts: getBusts(loser)
+            },
+            margin: Math.abs((winner.points || 0) - (loser.points || 0))
+          });
+        });
+
+        return processed.sort((a, b) => b.margin - a.margin);
+      }, [matchups, users, rosters, playersDb]);
+
+      // Week highlights
+      const weekHighlights = useMemo(() => {
+        if (!processedMatchups.length) return null;
+
+        // All players this week
+        const allPlayers = [];
+        matchups.forEach(m => {
+          const user = users.find(u => {
+            const roster = rosters.find(r => r.roster_id === m.roster_id);
+            return roster && u.user_id === roster.owner_id;
+          });
+          const managerName = user?.display_name || 'Unknown';
+          
+          Object.entries(m.players_points || {}).forEach(([pid, pts]) => {
+            if (m.starters?.includes(pid)) {
+              allPlayers.push({
+                id: pid,
+                name: playersDb[pid]?.full_name || pid,
+                points: pts || 0,
+                manager: managerName
+              });
+            }
+          });
+        });
+
+        const sortedPlayers = allPlayers.sort((a, b) => b.points - a.points);
+        const mvp = sortedPlayers[0] || { name: 'N/A', points: 0, manager: 'N/A' };
+        const bust = sortedPlayers[sortedPlayers.length - 1] || { name: 'N/A', points: 0, manager: 'N/A' };
+
+        // Biggest blowout and closest game
+        const biggestBlowout = processedMatchups[0];
+        const closestGame = [...processedMatchups].sort((a, b) => a.margin - b.margin)[0];
+
+        // Standings
+        const standings = rosters
+          .map(r => {
+            const user = users.find(u => u.user_id === r.owner_id);
+            return {
+              name: user?.display_name || 'Unknown',
+              oderId: r.roster_id,
+              wins: r.settings?.wins || 0,
+              losses: r.settings?.losses || 0,
+              fpts: r.settings?.fpts || 0
+            };
+          })
+          .sort((a, b) => b.wins - a.wins || b.fpts - a.fpts);
+
+        return {
+          matchups: processedMatchups,
+          mvp,
+          bust,
+          biggestBlowout: {
+            winner: biggestBlowout?.winner.name || 'N/A',
+            loser: biggestBlowout?.loser.name || 'N/A',
+            margin: biggestBlowout?.margin || 0
+          },
+          closestGame: {
+            winner: closestGame?.winner.name || 'N/A',
+            loser: closestGame?.loser.name || 'N/A',
+            margin: closestGame?.margin || 0
+          },
+          standings
+        };
+      }, [processedMatchups, matchups, users, rosters, playersDb]);
+
+      // Generate chronicle for a matchup
+      const handleGenerateMatchupChronicle = async (matchup) => {
+        setGenerating(true);
+        const chronicle = await generateChronicle(matchup, selectedTone, {
+          leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
+          week
+        });
+        setChronicles(prev => ({
+          ...prev,
+          [matchup.id]: { text: chronicle, tone: selectedTone }
+        }));
+        setGenerating(false);
+      };
+
+      // Generate week summary
+      const handleGenerateWeekSummary = async () => {
+        if (!weekHighlights) return;
+        setGenerating(true);
+        const summary = await generateWeekSummary(weekHighlights, selectedTone, {
+          leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
+          week
+        });
+        setWeekSummary(summary);
+        setGenerating(false);
+      };
+
+      // Generate all chronicles
+      const handleGenerateAll = async () => {
+        setGenerating(true);
+        
+        // Generate week summary first
+        if (weekHighlights) {
+          const summary = await generateWeekSummary(weekHighlights, selectedTone, {
+            leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
+            week
+          });
+          setWeekSummary(summary);
+        }
+
+        // Then generate each matchup
+        for (const matchup of processedMatchups) {
+          const chronicle = await generateChronicle(matchup, selectedTone, {
+            leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
+            week
+          });
+          setChronicles(prev => ({
+            ...prev,
+            [matchup.id]: { text: chronicle, tone: selectedTone }
+          }));
+        }
+        
+        setGenerating(false);
+      };
+
+      // Copy to clipboard
+      const copyToClipboard = (text) => {
+        navigator.clipboard.writeText(text);
+        alert('¡Copiado al portapapeles!');
+      };
+
+      // Export full chronicle
+      const exportFullChronicle = () => {
+        let fullText = `📰 CRÓNICA SEMANA ${week} - ${leagueInfo?.name || 'Liga'}\n`;
+        fullText += `${'═'.repeat(50)}\n\n`;
+        
+        if (weekSummary) {
+          fullText += `📋 RESUMEN DE LA JORNADA\n${'-'.repeat(30)}\n${weekSummary}\n\n`;
+        }
+        
+        fullText += `🏈 CRÓNICAS POR PARTIDO\n${'═'.repeat(50)}\n\n`;
+        
+        processedMatchups.forEach(matchup => {
+          fullText += `${matchup.winner.name} ${matchup.winner.points} - ${matchup.loser.points} ${matchup.loser.name}\n`;
+          if (chronicles[matchup.id]) {
+            fullText += `${chronicles[matchup.id].text}\n`;
+          }
+          fullText += `\n${'-'.repeat(30)}\n\n`;
+        });
+
+        copyToClipboard(fullText);
+      };
+
+      return (
+        <div style={styles.app}>
+          {/* Header */}
+          <header style={styles.header}>
+            <div style={styles.headerContent}>
+              <div style={styles.logo}>
+                <span style={styles.logoIcon}>📰</span>
+                <div>
+                  <h1 style={styles.logoTitle}>Fantasy Chronicle</h1>
+                  <p style={styles.logoSub}>Crónicas épicas de tu liga</p>
+                </div>
+              </div>
+              <div style={styles.headerActions}>
+                {userId && (
+                  <>
+                    <select 
+                      value={week} 
+                      onChange={e => setWeek(+e.target.value)}
+                      style={styles.weekSelect}
+                    >
+                      {[...Array(18)].map((_, i) => (
+                        <option key={i+1} value={i+1}>Semana {i+1}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setShowSettings(true)} style={styles.iconBtn}>⚙️</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </header>
+
+          {/* Settings Modal */}
+          {showSettings && (
+            <div style={styles.modalOverlay} onClick={() => userId && setShowSettings(false)}>
+              <div style={styles.modal} onClick={e => e.stopPropagation()}>
+                <h2 style={styles.modalTitle}>⚙️ Configuración</h2>
+                
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Tu username de Sleeper</label>
+                  <input
+                    type="text"
+                    value={userInput}
+                    onChange={e => setUserInput(e.target.value)}
+                    placeholder="ej: JavierPerez"
+                    style={styles.input}
+                    onKeyDown={e => e.key === 'Enter' && handleConnect()}
+                  />
+                  <button onClick={handleConnect} style={styles.btnPrimary}>
+                    {loading ? '⏳ Conectando...' : '🔗 Conectar'}
+                  </button>
+                </div>
+
+                {userId && (
+                  <button onClick={() => setShowSettings(false)} style={{...styles.btnSecondary, marginTop: '20px'}}>
+                    Cerrar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* League Tabs */}
+          {leagues.length > 0 && (
+            <div style={styles.leagueTabs}>
+              {leagues.map(lg => (
+                <button
+                  key={lg.league_id}
+                  onClick={() => setSelectedLeague(lg)}
+                  style={{
+                    ...styles.leagueTab,
+                    ...(selectedLeague?.league_id === lg.league_id ? styles.leagueTabActive : {})
+                  }}
+                >
+                  {lg.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Main Content */}
+          <main style={styles.main}>
+            {!userId ? (
+              <WelcomeScreen onSetup={() => setShowSettings(true)} />
+            ) : loading ? (
+              <div style={styles.loading}>⏳ Cargando datos de la liga...</div>
+            ) : !selectedLeague ? (
+              <div style={styles.emptyState}>
+                <span style={styles.emptyIcon}>👆</span>
+                <p>Selecciona una liga para comenzar</p>
+              </div>
+            ) : (
+              <>
+                {/* Tone Selector & Actions */}
+                <div style={styles.controlBar}>
+                  <div style={styles.toneSelector}>
+                    <label style={styles.toneLabel}>Tono de las crónicas:</label>
+                    <select 
+                      value={selectedTone} 
+                      onChange={e => setSelectedTone(e.target.value)}
+                      style={styles.toneSelect}
+                    >
+                      {Object.entries(TONES).map(([key, val]) => (
+                        <option key={key} value={key}>{val.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={styles.actionButtons}>
+                    <button 
+                      onClick={handleGenerateAll} 
+                      disabled={generating}
+                      style={styles.btnGenerate}
+                    >
+                      {generating ? '✍️ Generando...' : '✨ Generar Todo'}
+                    </button>
+                    {weekSummary && (
+                      <button onClick={exportFullChronicle} style={styles.btnExport}>
+                        📋 Copiar Todo
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* View Tabs */}
+                <div style={styles.viewTabs}>
+                  <button 
+                    onClick={() => setView('summary')}
+                    style={{...styles.viewTab, ...(view === 'summary' ? styles.viewTabActive : {})}}
+                  >
+                    📰 Resumen
+                  </button>
+                  <button 
+                    onClick={() => setView('matchups')}
+                    style={{...styles.viewTab, ...(view === 'matchups' ? styles.viewTabActive : {})}}
+                  >
+                    🏈 Partidos ({processedMatchups.length})
+                  </button>
+                  <button 
+                    onClick={() => setView('ratings')}
+                    style={{...styles.viewTab, ...(view === 'ratings' ? styles.viewTabActive : {})}}
+                  >
+                    ⭐ Rankings
+                  </button>
+                </div>
+
+                {/* Summary View */}
+                {view === 'summary' && weekHighlights && (
+                  <div className="fade-in">
+                    {/* Highlights Cards */}
+                    <div style={styles.highlightsGrid}>
+                      <HighlightCard 
+                        icon="🏆" 
+                        label="MVP de la Semana" 
+                        value={weekHighlights.mvp.name}
+                        sub={`${weekHighlights.mvp.points} pts • ${weekHighlights.mvp.manager}`}
+                        color="#b8860b"
+                      />
+                      <HighlightCard 
+                        icon="💀" 
+                        label="Decepción" 
+                        value={weekHighlights.bust.name}
+                        sub={`${weekHighlights.bust.points} pts • ${weekHighlights.bust.manager}`}
+                        color="#9b2c2c"
+                      />
+                      <HighlightCard 
+                        icon="💥" 
+                        label="Mayor Paliza" 
+                        value={`${weekHighlights.biggestBlowout.winner}`}
+                        sub={`vs ${weekHighlights.biggestBlowout.loser} (+${weekHighlights.biggestBlowout.margin.toFixed(1)})`}
+                        color="#2d6a4f"
+                      />
+                      <HighlightCard 
+                        icon="😰" 
+                        label="Foto Finish" 
+                        value={weekHighlights.closestGame.winner}
+                        sub={`vs ${weekHighlights.closestGame.loser} (+${weekHighlights.closestGame.margin.toFixed(2)})`}
+                        color="#c4704f"
+                      />
+                    </div>
+
+                    {/* Week Summary */}
+                    <div style={styles.summarySection}>
+                      <div style={styles.sectionHeader}>
+                        <h2 style={styles.sectionTitle}>📝 Resumen Editorial</h2>
+                        {!weekSummary && (
+                          <button 
+                            onClick={handleGenerateWeekSummary}
+                            disabled={generating}
+                            style={styles.btnSmall}
+                          >
+                            {generating ? '✍️...' : '✨ Generar'}
+                          </button>
+                        )}
+                      </div>
+                      {weekSummary ? (
+                        <div style={styles.chronicleText}>
+                          {weekSummary}
+                          <div style={styles.chronicleActions}>
+                            <button 
+                              onClick={() => copyToClipboard(weekSummary)}
+                              style={styles.copyBtn}
+                            >
+                              📋 Copiar
+                            </button>
+                          </div>
+                          <AudioPlayer text={weekSummary} speech={speech} />
+                        </div>
+                      ) : (
+                        <p style={styles.placeholder}>
+                          Haz clic en "Generar" para crear el resumen editorial de la semana
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Results Table */}
+                    <div style={styles.resultsSection}>
+                      <h2 style={styles.sectionTitle}>📊 Resultados</h2>
+                      <div style={styles.resultsTable}>
+                        {processedMatchups.map(m => (
+                          <div key={m.id} style={styles.resultRow}>
+                            <div style={styles.resultTeam}>
+                              <span style={styles.resultWinner}>✅ {m.winner.name}</span>
+                              <span style={styles.resultScore}>{m.winner.points.toFixed(2)}</span>
+                            </div>
+                            <span style={styles.resultVs}>vs</span>
+                            <div style={styles.resultTeam}>
+                              <span style={styles.resultScore}>{m.loser.points.toFixed(2)}</span>
+                              <span style={styles.resultLoser}>❌ {m.loser.name}</span>
+                            </div>
+                            <span style={{
+                              ...styles.resultMargin,
+                              background: m.margin > 30 ? '#9b2c2c' : m.margin < 5 ? '#c4704f' : '#7a7a7a'
+                            }}>
+                              {m.margin < 5 ? '🔥' : m.margin > 30 ? '💀' : ''} +{m.margin.toFixed(1)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Matchups View */}
+                {view === 'matchups' && (
+                  <div className="fade-in" style={styles.matchupsGrid}>
+                    {processedMatchups.map(matchup => (
+                      <MatchupCard 
+                        key={matchup.id}
+                        matchup={matchup}
+                        chronicle={chronicles[matchup.id]}
+                        onGenerate={() => handleGenerateMatchupChronicle(matchup)}
+                        onCopy={() => chronicles[matchup.id] && copyToClipboard(chronicles[matchup.id].text)}
+                        generating={generating}
+                        speech={speech}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Ratings View */}
+                {view === 'ratings' && (
+                  <div className="fade-in">
+                    <RatingsView 
+                      rosters={rosters}
+                      users={users}
+                      managerRatings={managerRatings}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </main>
+
+          {/* Footer */}
+          <footer style={styles.footer}>
+            <p>📰 Fantasy Chronicle v1.0 • Powered by Claude AI + Sleeper</p>
+          </footer>
+        </div>
+      );
+    }
+
+    // ================================================================
+    // COMPONENTS
+    // ================================================================
+    function WelcomeScreen({ onSetup }) {
+      return (
+        <div style={styles.welcome}>
+          <div style={styles.welcomeIcon}>📰</div>
+          <h2 style={styles.welcomeTitle}>Fantasy Chronicle</h2>
+          <p style={styles.welcomeText}>
+            Genera crónicas épicas, divertidas y memorables de cada jornada de tu liga de fantasy.
+            Múltiples tonos, highlights automáticos, y sistema de ratings para tus managers.
+          </p>
+          <div style={styles.welcomeFeatures}>
+            <Feature icon="✍️" title="Crónicas IA" desc="Generadas por Claude" />
+            <Feature icon="🎭" title="6 Tonos" desc="Jocoso, dramático, trash talk..." />
+            <Feature icon="⭐" title="Ratings" desc="Sistema ELO para managers" />
+            <Feature icon="📤" title="Compartir" desc="Exporta para WhatsApp" />
+          </div>
+          <button onClick={onSetup} style={styles.welcomeBtn}>
+            🚀 Conectar mi liga
+          </button>
+        </div>
+      );
+    }
+
+    function Feature({ icon, title, desc }) {
+      return (
+        <div style={styles.featureBox}>
+          <span style={styles.featureIcon}>{icon}</span>
+          <strong>{title}</strong>
+          <small>{desc}</small>
+        </div>
+      );
+    }
+
+    function HighlightCard({ icon, label, value, sub, color }) {
+      return (
+        <div style={{...styles.highlightCard, borderLeftColor: color}}>
+          <span style={styles.highlightIcon}>{icon}</span>
+          <div>
+            <p style={styles.highlightLabel}>{label}</p>
+            <p style={{...styles.highlightValue, color}}>{value}</p>
+            <p style={styles.highlightSub}>{sub}</p>
+          </div>
+        </div>
+      );
+    }
+
+    function MatchupCard({ matchup, chronicle, onGenerate, onCopy, generating, speech }) {
+      return (
+        <div style={styles.matchupCard}>
+          <div style={styles.matchupHeader}>
+            <div style={styles.matchupTeams}>
+              <div style={styles.matchupWinner}>
+                <span style={styles.matchupEmoji}>🏆</span>
+                <div>
+                  <p style={styles.matchupName}>{matchup.winner.name}</p>
+                  <p style={styles.matchupPts}>{matchup.winner.points.toFixed(2)} pts</p>
+                </div>
+              </div>
+              <span style={styles.matchupVs}>VS</span>
+              <div style={styles.matchupLoser}>
+                <span style={styles.matchupEmoji}>💀</span>
+                <div>
+                  <p style={styles.matchupName}>{matchup.loser.name}</p>
+                  <p style={styles.matchupPts}>{matchup.loser.points.toFixed(2)} pts</p>
+                </div>
+              </div>
+            </div>
+            <span style={{
+              ...styles.matchupBadge,
+              background: matchup.margin > 30 ? '#9b2c2c' : matchup.margin < 5 ? '#c4704f' : '#2d6a4f'
+            }}>
+              {matchup.margin < 5 ? '🔥 CERRADO' : matchup.margin > 30 ? '💀 PALIZA' : `+${matchup.margin.toFixed(1)}`}
+            </span>
+          </div>
+
+          {/* Top Players */}
+          <div style={styles.topPlayers}>
+            <div style={styles.topPlayersCol}>
+              <p style={styles.topPlayersTitle}>⭐ Destacados</p>
+              {matchup.winner.topPlayers.slice(0, 2).map(p => (
+                <p key={p.id} style={styles.topPlayer}>{p.name}: {p.points.toFixed(1)}</p>
+              ))}
+            </div>
+            <div style={styles.topPlayersCol}>
+              <p style={styles.topPlayersTitle}>📉 Decepciones</p>
+              {matchup.loser.busts.slice(0, 2).map(p => (
+                <p key={p.id} style={styles.bustPlayer}>{p.name}: {p.points.toFixed(1)}</p>
+              ))}
+            </div>
+          </div>
+
+          {/* Chronicle */}
+          {chronicle ? (
+            <div style={styles.matchupChronicle}>
+              <p style={styles.chronicleContent}>{chronicle.text}</p>
+              <div style={styles.chronicleActions}>
+                <span style={styles.chronicleTone}>{TONES[chronicle.tone]?.name}</span>
+                <button onClick={onCopy} style={styles.copyBtnSmall}>📋</button>
+              </div>
+              <AudioPlayer text={chronicle.text} speech={speech} />
+            </div>
+          ) : (
+            <button 
+              onClick={onGenerate} 
+              disabled={generating}
+              style={styles.btnGenerateSmall}
+            >
+              {generating ? '✍️ Generando...' : '✨ Generar Crónica'}
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    function AudioPlayer({ text, speech }) {
+      if (!text) return null;
+      
+      const { speaking, paused, togglePlayPause, stop, voices, selectedVoice, setSelectedVoice, rate, setRate, supported, error } = speech;
+      
+      // Not supported
+      if (!supported) {
+        return (
+          <div style={{...styles.audioPlayer, background: '#4a2c2c'}}>
+            <p style={{color: '#ff9999', fontSize: '13px', margin: 0}}>
+              ⚠️ Tu navegador no soporta Text-to-Speech. Usa Chrome, Edge o Safari.
+            </p>
+          </div>
+        );
+      }
+
+      // No voices loaded yet
+      if (voices.length === 0) {
+        return (
+          <div style={styles.audioPlayer}>
+            <p style={{color: '#999', fontSize: '13px', margin: 0}}>
+              ⏳ Cargando voces...
+            </p>
+          </div>
+        );
+      }
+      
+      return (
+        <div style={styles.audioPlayer}>
+          <div style={styles.audioControls}>
+            <button 
+              onClick={() => togglePlayPause(text)}
+              style={styles.audioPlayBtn}
+            >
+              {!speaking ? '🔊 Escuchar' : paused ? '▶️ Continuar' : '⏸️ Pausa'}
+            </button>
+            {speaking && (
+              <button onClick={stop} style={styles.audioStopBtn}>
+                ⏹️ Detener
+              </button>
+            )}
+          </div>
+          <div style={styles.audioSettings}>
+            <select 
+              value={selectedVoice?.name || ''}
+              onChange={e => {
+                const voice = voices.find(v => v.name === e.target.value);
+                setSelectedVoice(voice);
+              }}
+              style={styles.audioSelect}
+            >
+              {voices.map(v => (
+                <option key={v.name} value={v.name}>
+                  {v.name.substring(0, 25)} ({v.lang})
+                </option>
+              ))}
+            </select>
+            <select 
+              value={rate}
+              onChange={e => setRate(parseFloat(e.target.value))}
+              style={styles.audioSelectSmall}
+            >
+              <option value={0.75}>0.75x</option>
+              <option value={1.0}>1.0x</option>
+              <option value={1.25}>1.25x</option>
+              <option value={1.5}>1.5x</option>
+            </select>
+          </div>
+          {error && (
+            <div style={{...styles.audioIndicator, background: 'rgba(155, 44, 44, 0.3)'}}>
+              <span style={{fontSize: '13px', color: '#ff9999'}}>⚠️ {error}</span>
+            </div>
+          )}
+          {speaking && !error && (
+            <div style={styles.audioIndicator}>
+              <span style={{...styles.audioWave, animation: paused ? 'none' : 'pulse 1s infinite'}}>🔊</span>
+              <span style={styles.audioStatus}>{paused ? 'Pausado' : 'Reproduciendo...'}</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function RatingsView({ rosters, users, managerRatings }) {
+      const ratings = useMemo(() => {
+        return rosters.map(r => {
+          const user = users.find(u => u.user_id === r.owner_id);
+          const name = user?.display_name || 'Unknown';
+          const rating = managerRatings[r.roster_id] || 1500;
+          const tier = getRatingTier(rating);
+          
+          return {
+            name,
+            oderId: r.roster_id,
+            rating,
+            tier,
+            wins: r.settings?.wins || 0,
+            losses: r.settings?.losses || 0,
+            fpts: r.settings?.fpts || 0
+          };
+        }).sort((a, b) => b.rating - a.rating);
+      }, [rosters, users, managerRatings]);
+
+      return (
+        <div style={styles.ratingsSection}>
+          <h2 style={styles.sectionTitle}>⭐ Manager Power Rankings</h2>
+          <p style={styles.ratingsDesc}>
+            Sistema de rating basado en victorias, márgenes, gestión de lineup y consistencia.
+          </p>
+          <div style={styles.ratingsTable}>
+            {ratings.map((r, idx) => (
+              <div key={r.oderId} style={styles.ratingRow}>
+                <span style={styles.ratingRank}>#{idx + 1}</span>
+                <span style={styles.ratingTierBadge}>
+                  {r.tier.emoji}
+                </span>
+                <div style={styles.ratingInfo}>
+                  <p style={styles.ratingName}>{r.name}</p>
+                  <p style={styles.ratingRecord}>{r.wins}-{r.losses} • {r.fpts} pts</p>
+                </div>
+                <div style={styles.ratingScore}>
+                  <span style={{...styles.ratingValue, color: r.tier.color}}>{r.rating}</span>
+                  <span style={styles.ratingTierName}>{r.tier.tier}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ================================================================
+    // STYLES
+    // ================================================================
+    const styles = {
+      app: { minHeight: '100vh', display: 'flex', flexDirection: 'column' },
+      
+      header: {
+        background: 'var(--bg-secondary)',
+        borderBottom: '1px solid var(--border)',
+        padding: '16px 24px',
+        boxShadow: 'var(--shadow)',
+      },
+      headerContent: { maxWidth: '1100px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+      logo: { display: 'flex', alignItems: 'center', gap: '12px' },
+      logoIcon: { fontSize: '36px' },
+      logoTitle: { fontSize: '24px', fontWeight: '700', margin: 0, color: 'var(--text-primary)' },
+      logoSub: { fontSize: '13px', color: 'var(--text-muted)', margin: 0 },
+      headerActions: { display: 'flex', gap: '10px', alignItems: 'center' },
+      weekSelect: {
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '8px 12px',
+        fontSize: '14px',
+        color: 'var(--text-primary)',
+      },
+      iconBtn: {
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '8px 12px',
+        fontSize: '18px',
+        cursor: 'pointer',
+      },
+
+      // Modal
+      modalOverlay: {
+        position: 'fixed', inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 200, padding: '20px',
+        backdropFilter: 'blur(4px)',
+      },
+      modal: {
+        background: 'var(--bg-secondary)',
+        borderRadius: '16px',
+        padding: '28px',
+        width: '100%', maxWidth: '400px',
+        boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+      },
+      modalTitle: { fontSize: '20px', marginBottom: '20px' },
+      inputGroup: { marginBottom: '16px' },
+      label: { display: 'block', fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '6px' },
+      input: {
+        width: '100%',
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '12px',
+        fontSize: '15px',
+        color: 'var(--text-primary)',
+        marginBottom: '12px',
+      },
+      btnPrimary: {
+        width: '100%',
+        background: 'linear-gradient(135deg, #c4704f 0%, #b8623e 100%)',
+        border: 'none', borderRadius: '8px',
+        padding: '12px', color: '#fff',
+        fontSize: '15px', fontWeight: '600',
+        cursor: 'pointer',
+      },
+      btnSecondary: {
+        width: '100%',
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px', padding: '12px',
+        fontSize: '14px', cursor: 'pointer',
+        marginTop: '10px',
+      },
+
+      // League Tabs
+      leagueTabs: {
+        background: 'var(--bg-secondary)',
+        borderBottom: '1px solid var(--border)',
+        padding: '12px 24px',
+        display: 'flex', gap: '10px',
+        overflowX: 'auto',
+      },
+      leagueTab: {
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border)',
+        borderRadius: '20px',
+        padding: '8px 18px',
+        fontSize: '14px',
+        color: 'var(--text-secondary)',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      leagueTabActive: {
+        background: 'var(--accent-orange)',
+        borderColor: 'var(--accent-orange)',
+        color: '#fff',
+      },
+
+      // Main
+      main: { flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', width: '100%' },
+      loading: { textAlign: 'center', padding: '60px', color: 'var(--text-muted)' },
+      emptyState: { textAlign: 'center', padding: '80px 20px' },
+      emptyIcon: { fontSize: '48px', display: 'block', marginBottom: '16px' },
+
+      // Welcome
+      welcome: { textAlign: 'center', padding: '40px 20px' },
+      welcomeIcon: { fontSize: '72px', marginBottom: '16px' },
+      welcomeTitle: { fontSize: '36px', fontWeight: '700', marginBottom: '16px' },
+      welcomeText: { fontSize: '17px', color: 'var(--text-secondary)', maxWidth: '500px', margin: '0 auto 32px', lineHeight: 1.7 },
+      welcomeFeatures: { display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '32px', flexWrap: 'wrap' },
+      featureBox: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '12px',
+        padding: '20px',
+        width: '130px',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', gap: '6px',
+        boxShadow: 'var(--shadow)',
+      },
+      featureIcon: { fontSize: '28px' },
+      welcomeBtn: {
+        background: 'linear-gradient(135deg, #c4704f 0%, #b8623e 100%)',
+        border: 'none', borderRadius: '12px',
+        padding: '16px 32px', color: '#fff',
+        fontSize: '17px', fontWeight: '600',
+        cursor: 'pointer',
+        boxShadow: '0 4px 12px rgba(196,112,79,0.3)',
+      },
+
+      // Control Bar
+      controlBar: {
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: '20px', flexWrap: 'wrap', gap: '12px',
+      },
+      toneSelector: { display: 'flex', alignItems: 'center', gap: '10px' },
+      toneLabel: { fontSize: '14px', color: 'var(--text-secondary)' },
+      toneSelect: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '10px 14px',
+        fontSize: '14px',
+        minWidth: '180px',
+      },
+      actionButtons: { display: 'flex', gap: '10px' },
+      btnGenerate: {
+        background: 'linear-gradient(135deg, #2d6a4f 0%, #1e4d38 100%)',
+        border: 'none', borderRadius: '8px',
+        padding: '10px 20px', color: '#fff',
+        fontSize: '14px', fontWeight: '600',
+        cursor: 'pointer',
+      },
+      btnExport: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '10px 20px',
+        fontSize: '14px',
+        cursor: 'pointer',
+      },
+
+      // View Tabs
+      viewTabs: {
+        display: 'flex', gap: '8px',
+        marginBottom: '24px',
+        borderBottom: '1px solid var(--border)',
+        paddingBottom: '12px',
+      },
+      viewTab: {
+        background: 'transparent',
+        border: 'none',
+        padding: '10px 18px',
+        fontSize: '15px',
+        color: 'var(--text-muted)',
+        cursor: 'pointer',
+        borderRadius: '8px',
+      },
+      viewTabActive: {
+        background: 'var(--bg-tertiary)',
+        color: 'var(--text-primary)',
+        fontWeight: '600',
+      },
+
+      // Highlights
+      highlightsGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        gap: '16px',
+        marginBottom: '28px',
+      },
+      highlightCard: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderLeft: '4px solid',
+        borderRadius: '12px',
+        padding: '18px',
+        display: 'flex', alignItems: 'flex-start', gap: '14px',
+        boxShadow: 'var(--shadow)',
+      },
+      highlightIcon: { fontSize: '28px' },
+      highlightLabel: { fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' },
+      highlightValue: { fontSize: '18px', fontWeight: '700', margin: '0 0 4px' },
+      highlightSub: { fontSize: '13px', color: 'var(--text-secondary)', margin: 0 },
+
+      // Summary Section
+      summarySection: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '12px',
+        padding: '24px',
+        marginBottom: '24px',
+        boxShadow: 'var(--shadow)',
+      },
+      sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
+      sectionTitle: { fontSize: '20px', margin: 0 },
+      btnSmall: {
+        background: 'var(--accent-orange)',
+        border: 'none', borderRadius: '6px',
+        padding: '8px 16px', color: '#fff',
+        fontSize: '13px', fontWeight: '600',
+        cursor: 'pointer',
+      },
+      chronicleText: {
+        fontSize: '16px',
+        lineHeight: 1.8,
+        color: 'var(--text-primary)',
+        whiteSpace: 'pre-wrap',
+      },
+      chronicleActions: {
+        display: 'flex',
+        justifyContent: 'flex-end',
+        gap: '10px',
+        marginTop: '12px',
+        paddingTop: '12px',
+        borderTop: '1px solid var(--border)',
+      },
+      copyBtn: {
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border)',
+        borderRadius: '6px',
+        padding: '8px 14px',
+        fontSize: '13px',
+        cursor: 'pointer',
+      },
+      placeholder: {
+        color: 'var(--text-muted)',
+        fontStyle: 'italic',
+        padding: '20px 0',
+      },
+
+      // Results
+      resultsSection: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '12px',
+        padding: '24px',
+        boxShadow: 'var(--shadow)',
+      },
+      resultsTable: { display: 'flex', flexDirection: 'column', gap: '12px' },
+      resultRow: {
+        display: 'flex', alignItems: 'center', gap: '12px',
+        padding: '12px 16px',
+        background: 'var(--bg-tertiary)',
+        borderRadius: '8px',
+        flexWrap: 'wrap',
+      },
+      resultTeam: { display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: '150px' },
+      resultWinner: { fontWeight: '600', color: 'var(--accent-green)' },
+      resultLoser: { color: 'var(--text-muted)' },
+      resultScore: { fontFamily: 'JetBrains Mono', fontSize: '14px' },
+      resultVs: { color: 'var(--text-muted)', fontSize: '12px' },
+      resultMargin: {
+        padding: '4px 10px',
+        borderRadius: '20px',
+        fontSize: '12px',
+        fontWeight: '600',
+        color: '#fff',
+      },
+
+      // Matchups Grid
+      matchupsGrid: { display: 'flex', flexDirection: 'column', gap: '20px' },
+      matchupCard: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '12px',
+        padding: '20px',
+        boxShadow: 'var(--shadow)',
+      },
+      matchupHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' },
+      matchupTeams: { display: 'flex', alignItems: 'center', gap: '16px' },
+      matchupWinner: { display: 'flex', alignItems: 'center', gap: '10px' },
+      matchupLoser: { display: 'flex', alignItems: 'center', gap: '10px' },
+      matchupEmoji: { fontSize: '24px' },
+      matchupName: { fontSize: '16px', fontWeight: '600', margin: 0 },
+      matchupPts: { fontSize: '14px', color: 'var(--text-muted)', margin: 0 },
+      matchupVs: { fontSize: '14px', color: 'var(--text-muted)', fontWeight: '600' },
+      matchupBadge: {
+        padding: '6px 12px',
+        borderRadius: '20px',
+        fontSize: '12px',
+        fontWeight: '600',
+        color: '#fff',
+      },
+      topPlayers: { display: 'flex', gap: '24px', marginBottom: '16px', flexWrap: 'wrap' },
+      topPlayersCol: { flex: 1, minWidth: '150px' },
+      topPlayersTitle: { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase' },
+      topPlayer: { fontSize: '13px', color: 'var(--accent-green)', margin: '4px 0' },
+      bustPlayer: { fontSize: '13px', color: 'var(--accent-red)', margin: '4px 0' },
+      matchupChronicle: {
+        background: 'var(--bg-tertiary)',
+        borderRadius: '8px',
+        padding: '16px',
+        marginTop: '12px',
+      },
+      chronicleContent: { fontSize: '15px', lineHeight: 1.7, margin: '0 0 12px', whiteSpace: 'pre-wrap' },
+      chronicleActions: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+      chronicleTone: { fontSize: '12px', color: 'var(--text-muted)' },
+      copyBtnSmall: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '4px',
+        padding: '4px 8px',
+        fontSize: '14px',
+        cursor: 'pointer',
+      },
+      btnGenerateSmall: {
+        width: '100%',
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '12px',
+        fontSize: '14px',
+        cursor: 'pointer',
+        marginTop: '12px',
+      },
+
+      // Ratings
+      ratingsSection: {
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '12px',
+        padding: '24px',
+        boxShadow: 'var(--shadow)',
+      },
+      ratingsDesc: { color: 'var(--text-muted)', marginBottom: '20px' },
+      ratingsTable: { display: 'flex', flexDirection: 'column', gap: '10px' },
+      ratingRow: {
+        display: 'flex', alignItems: 'center', gap: '14px',
+        padding: '14px 18px',
+        background: 'var(--bg-tertiary)',
+        borderRadius: '10px',
+      },
+      ratingRank: { fontSize: '16px', fontWeight: '700', color: 'var(--text-muted)', minWidth: '36px' },
+      ratingTierBadge: { fontSize: '24px' },
+      ratingInfo: { flex: 1 },
+      ratingName: { fontSize: '16px', fontWeight: '600', margin: 0 },
+      ratingRecord: { fontSize: '13px', color: 'var(--text-muted)', margin: 0 },
+      ratingScore: { textAlign: 'right' },
+      ratingValue: { fontSize: '22px', fontWeight: '700', display: 'block' },
+      ratingTierName: { fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' },
+
+      // Footer
+      footer: {
+        background: 'var(--bg-secondary)',
+        borderTop: '1px solid var(--border)',
+        padding: '16px 24px',
+        textAlign: 'center',
+        fontSize: '13px',
+        color: 'var(--text-muted)',
+      },
+
+      // Audio Player
+      audioPlayer: {
+        marginTop: '16px',
+        padding: '14px',
+        background: 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)',
+        borderRadius: '10px',
+        border: '1px solid #3a3a3a',
+      },
+      audioControls: {
+        display: 'flex',
+        gap: '10px',
+        marginBottom: '10px',
+      },
+      audioPlayBtn: {
+        background: 'linear-gradient(135deg, #c4704f 0%, #b8623e 100%)',
+        border: 'none',
+        borderRadius: '8px',
+        padding: '10px 20px',
+        color: '#fff',
+        fontSize: '14px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+      },
+      audioStopBtn: {
+        background: '#4a4a4a',
+        border: 'none',
+        borderRadius: '8px',
+        padding: '10px 16px',
+        color: '#fff',
+        fontSize: '14px',
+        cursor: 'pointer',
+      },
+      audioSettings: {
+        display: 'flex',
+        gap: '10px',
+        flexWrap: 'wrap',
+      },
+      audioSelect: {
+        background: '#3a3a3a',
+        border: '1px solid #4a4a4a',
+        borderRadius: '6px',
+        padding: '8px 12px',
+        color: '#fff',
+        fontSize: '12px',
+        flex: '1',
+        minWidth: '120px',
+      },
+      audioSelectSmall: {
+        background: '#3a3a3a',
+        border: '1px solid #4a4a4a',
+        borderRadius: '6px',
+        padding: '8px 12px',
+        color: '#fff',
+        fontSize: '12px',
+        width: '80px',
+      },
+      audioIndicator: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        marginTop: '10px',
+        padding: '8px 12px',
+        background: 'rgba(196, 112, 79, 0.2)',
+        borderRadius: '6px',
+      },
+      audioWave: {
+        fontSize: '18px',
+      },
+      audioStatus: {
+        fontSize: '13px',
+        color: '#c4704f',
+        fontWeight: '500',
+      },
+    };
+
+    // ================================================================
+    // RENDER
+    // ================================================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
