@@ -380,10 +380,16 @@
     // ================================================================
     // CHRONICLE GENERATOR (Claude API)
     // ================================================================
-    async function generateChronicle(matchupData, tone, context) {
+    async function generateChronicle(matchupData, tone, context, useEmojis = true) {
       const toneConfig = TONES[tone];
       
+      const emojiInstruction = useEmojis 
+        ? 'Usa emojis para dar expresividad: 🏆 para victorias, 💀 para derrotas, 🔥 para momentos intensos, ⭐ para jugadores destacados, 📉 para decepciones. Incluye 3-5 emojis distribuidos naturalmente en el texto.'
+        : 'NO uses emojis en ninguna parte del texto. Escribe solo con palabras.';
+      
       const prompt = `Eres un cronista de fantasy football para una liga entre amigos. ${toneConfig.prompt}
+
+${emojiInstruction}
 
 CONTEXTO DE LA LIGA:
 - Liga: ${context.leagueName}
@@ -412,7 +418,7 @@ Escribe una crónica de 2-3 párrafos sobre este matchup. Sé específico con lo
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "claude-haiku-4-5-20251001",
+            model: "claude-sonnet-4-6",
             max_tokens: 800,
             messages: [{ role: "user", content: prompt }]
           })
@@ -434,10 +440,16 @@ Escribe una crónica de 2-3 párrafos sobre este matchup. Sé específico con lo
       }
     }
 
-    async function generateWeekSummary(weekData, tone, context) {
+    async function generateWeekSummary(weekData, tone, context, useEmojis = true) {
       const toneConfig = TONES[tone];
       
+      const emojiInstruction = useEmojis 
+        ? 'Usa emojis para dar expresividad: 🏆 para victorias, 💀 para derrotas, 🔥 para momentos intensos, ⭐ para jugadores MVP, 📉 para decepciones, 📊 para estadísticas. Incluye 5-8 emojis distribuidos naturalmente en el texto.'
+        : 'NO uses emojis en ninguna parte del texto. Escribe solo con palabras.';
+      
       const prompt = `Eres el cronista oficial de la liga de fantasy football "${context.leagueName}". ${toneConfig.prompt}
+
+${emojiInstruction}
 
 RESUMEN DE LA SEMANA ${context.week}:
 
@@ -459,7 +471,7 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "claude-haiku-4-5-20251001",
+            model: "claude-sonnet-4-6",
             max_tokens: 1200,
             messages: [{ role: "user", content: prompt }]
           })
@@ -501,6 +513,10 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
       const [chronicles, setChronicles] = useState({});
       const [weekSummary, setWeekSummary] = useState('');
       const [showSettings, setShowSettings] = useState(!localStorage.getItem('sleeperId'));
+      const [useEmojis, setUseEmojis] = useState(() => {
+        const saved = localStorage.getItem('useEmojis');
+        return saved !== null ? JSON.parse(saved) : true;
+      });
       const [managerRatings, setManagerRatings] = useState(() => {
         const saved = localStorage.getItem('managerRatings');
         return saved ? JSON.parse(saved) : {};
@@ -509,6 +525,11 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
       
       // Speech hook
       const speech = useSpeech();
+
+      // Save emoji preference
+      useEffect(() => {
+        localStorage.setItem('useEmojis', JSON.stringify(useEmojis));
+      }, [useEmojis]);
 
       // Load players DB
       useEffect(() => {
@@ -718,7 +739,7 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
         const chronicle = await generateChronicle(matchup, selectedTone, {
           leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
           week
-        });
+        }, useEmojis);
         setChronicles(prev => ({
           ...prev,
           [matchup.id]: { text: chronicle, tone: selectedTone }
@@ -733,7 +754,7 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
         const summary = await generateWeekSummary(weekHighlights, selectedTone, {
           leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
           week
-        });
+        }, useEmojis);
         setWeekSummary(summary);
         setGenerating(false);
       };
@@ -747,7 +768,7 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
           const summary = await generateWeekSummary(weekHighlights, selectedTone, {
             leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
             week
-          });
+          }, useEmojis);
           setWeekSummary(summary);
         }
 
@@ -756,7 +777,7 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
           const chronicle = await generateChronicle(matchup, selectedTone, {
             leagueName: leagueInfo?.name || selectedLeague?.name || 'Liga',
             week
-          });
+          }, useEmojis);
           setChronicles(prev => ({
             ...prev,
             [matchup.id]: { text: chronicle, tone: selectedTone }
@@ -792,6 +813,25 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
         });
 
         copyToClipboard(fullText);
+      };
+
+      // Export to WhatsApp
+      const exportToWhatsApp = () => {
+        let fullText = `📰 *CRÓNICA SEMANA ${week}*\n`;
+        fullText += `*${leagueInfo?.name || 'Liga'}*\n\n`;
+        
+        if (weekSummary) {
+          fullText += `${weekSummary}\n\n`;
+        }
+        
+        fullText += `🏈 *RESULTADOS*\n`;
+        processedMatchups.forEach(matchup => {
+          const emoji = matchup.margin > 30 ? '💀' : matchup.margin < 5 ? '🔥' : '✅';
+          fullText += `${emoji} ${matchup.winner.name} *${matchup.winner.points.toFixed(1)}* - ${matchup.loser.points.toFixed(1)} ${matchup.loser.name}\n`;
+        });
+        
+        const encoded = encodeURIComponent(fullText);
+        window.open(`https://wa.me/?text=${encoded}`, '_blank');
       };
 
       return (
@@ -844,6 +884,52 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
                   <button onClick={handleConnect} style={styles.btnPrimary}>
                     {loading ? '⏳ Conectando...' : '🔗 Conectar'}
                   </button>
+                </div>
+
+                <div style={{...styles.inputGroup, marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)'}}>
+                  <label style={styles.label}>🎨 Opciones de crónicas</label>
+                  
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px',
+                    background: 'var(--bg-tertiary)',
+                    borderRadius: '8px',
+                    marginTop: '10px'
+                  }}>
+                    <div>
+                      <p style={{margin: 0, fontWeight: '600'}}>Incluir emojis</p>
+                      <p style={{margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)'}}>
+                        Agrega 🏆💀🔥 a las crónicas (no afecta el audio)
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setUseEmojis(!useEmojis)}
+                      style={{
+                        width: '50px',
+                        height: '28px',
+                        borderRadius: '14px',
+                        border: 'none',
+                        background: useEmojis ? '#25D366' : '#ccc',
+                        cursor: 'pointer',
+                        position: 'relative',
+                        transition: 'background 0.2s'
+                      }}
+                    >
+                      <span style={{
+                        position: 'absolute',
+                        top: '3px',
+                        left: useEmojis ? '25px' : '3px',
+                        width: '22px',
+                        height: '22px',
+                        borderRadius: '50%',
+                        background: 'white',
+                        transition: 'left 0.2s',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                      }} />
+                    </button>
+                  </div>
                 </div>
 
                 {userId && (
@@ -909,9 +995,14 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
                       {generating ? '✍️ Generando...' : '✨ Generar Todo'}
                     </button>
                     {weekSummary && (
-                      <button onClick={exportFullChronicle} style={styles.btnExport}>
-                        📋 Copiar Todo
-                      </button>
+                      <>
+                        <button onClick={exportFullChronicle} style={styles.btnExport}>
+                          📋 Copiar Todo
+                        </button>
+                        <button onClick={exportToWhatsApp} style={{...styles.btnExport, background: '#25D366', color: 'white'}}>
+                          📤 WhatsApp
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -996,6 +1087,15 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
                               style={styles.copyBtn}
                             >
                               📋 Copiar
+                            </button>
+                            <button 
+                              onClick={() => {
+                                const text = encodeURIComponent(weekSummary);
+                                window.open(`https://wa.me/?text=${text}`, '_blank');
+                              }}
+                              style={{...styles.copyBtn, background: '#25D366', color: 'white'}}
+                            >
+                              📤 WhatsApp
                             </button>
                           </div>
                           <AudioPlayer text={weekSummary} speech={speech} />
@@ -1174,6 +1274,15 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
               <div style={styles.chronicleActions}>
                 <span style={styles.chronicleTone}>{TONES[chronicle.tone]?.name}</span>
                 <button onClick={onCopy} style={styles.copyBtnSmall}>📋</button>
+                <button 
+                  onClick={() => {
+                    const text = encodeURIComponent(chronicle.text);
+                    window.open(`https://wa.me/?text=${text}`, '_blank');
+                  }} 
+                  style={{...styles.copyBtnSmall, background: '#25D366'}}
+                >
+                  📤 WA
+                </button>
               </div>
               <AudioPlayer text={chronicle.text} speech={speech} />
             </div>
@@ -1191,6 +1300,33 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
     }
 
     function AudioPlayer({ text, speech }) {
+      const [editedText, setEditedText] = useState('');
+      const [isEditing, setIsEditing] = useState(false);
+      
+      // Limpiar texto para TTS - quita emojis, #, *, guiones decorativos, etc.
+      const cleanTextForSpeech = (t) => {
+        return t
+          // Quitar emojis
+          .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]/gu, '')
+          // Quitar # y * usados como formato
+          .replace(/^#+\s*/gm, '')
+          .replace(/\*+/g, '')
+          // Quitar guiones decorativos (---, —, etc.)
+          .replace(/[-—]{2,}/g, ', ')
+          .replace(/\s*—\s*/g, ', ')
+          // Quitar múltiples espacios
+          .replace(/\s+/g, ' ')
+          // Quitar líneas vacías múltiples
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+      };
+      
+      useEffect(() => {
+        if (text) {
+          setEditedText(cleanTextForSpeech(text));
+        }
+      }, [text]);
+      
       if (!text) return null;
       
       const { speaking, paused, togglePlayPause, stop, voices, selectedVoice, setSelectedVoice, rate, setRate, supported, error } = speech;
@@ -1221,7 +1357,7 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
         <div style={styles.audioPlayer}>
           <div style={styles.audioControls}>
             <button 
-              onClick={() => togglePlayPause(text)}
+              onClick={() => togglePlayPause(editedText)}
               style={styles.audioPlayBtn}
             >
               {!speaking ? '🔊 Escuchar' : paused ? '▶️ Continuar' : '⏸️ Pausa'}
@@ -1231,7 +1367,42 @@ Escribe un resumen editorial de 3-4 párrafos cubriendo los highlights de la sem
                 ⏹️ Detener
               </button>
             )}
+            <button 
+              onClick={() => setIsEditing(!isEditing)} 
+              style={{...styles.audioStopBtn, background: isEditing ? 'var(--accent-orange)' : undefined}}
+            >
+              {isEditing ? '✓ Listo' : '✏️ Editar'}
+            </button>
           </div>
+          
+          {isEditing && (
+            <div style={{marginTop: '10px'}}>
+              <textarea
+                value={editedText}
+                onChange={e => setEditedText(e.target.value)}
+                style={{
+                  width: '100%',
+                  minHeight: '100px',
+                  padding: '10px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-secondary)',
+                  color: 'var(--text-primary)',
+                  fontSize: '14px',
+                  lineHeight: '1.5',
+                  resize: 'vertical',
+                  fontFamily: 'inherit'
+                }}
+              />
+              <button 
+                onClick={() => setEditedText(cleanTextForSpeech(text))}
+                style={{...styles.audioStopBtn, marginTop: '5px', fontSize: '12px'}}
+              >
+                🔄 Restaurar original
+              </button>
+            </div>
+          )}
+          
           <div style={styles.audioSettings}>
             <select 
               value={selectedVoice?.name || ''}
